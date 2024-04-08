@@ -8,7 +8,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-push-docker-image:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -43,24 +43,39 @@ jobs:
       - name: docker Hub push
         run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-demo
 
-  pull-and-run-docker-image-on-ec2:
-    # build-docker-image 과정이 완료되어야 실행됩니다.
-    needs: build-docker-image
-    runs-on: self-hosted
+      # GET GitHub IP (5)
+      - name: get GitHub IP
+        id: ip
+        uses: hyeonjuun/public-ip@v1.2
 
-    steps:
-      # 1. 최신 이미지를 풀받습니다
-      - name: docker pull
-        run: sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-demo
+      # Configure AWS Credentials (6) - AWS 접근 권한 취득(IAM)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2c
 
-      # 2. 기존의 컨테이너를 중지시킵니다
-      - name: docker stop container
-        run: sudo docker stop $(sudo docker ps -q) 2>/dev/null || true
+      # Add github ip to AWS (7)
+      - name: Add GitHub IP to AWS
+        run: |
+          aws ec2 authorize-security-group-ingress --group-id ${{ secrets.AWS_SG_ID }} --protocol tcp --port 22 --cidr ${{ steps.ip.outputs.ipv4 }}/32
 
-      # 3. 최신 이미지를 컨테이너화하여 실행시킵니다
-      - name: docker run new container
-        run: sudo docker run --name github-actions-demo --rm -d -p 8080:8080 ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-demo
+      # AWS EC2 Server Connect & Docker 명령어 실행 (8)
+      - name: AWS EC2 Connection
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          password: ${{ secrets.EC2_PASSWORD }}
+          port: ${{ secrets.EC2_SSH_PORT }}
+          timeout: 60s
+          script: |
+            sudo docker stop github-actions-demo
+            sudo docker rm github-actions-demo
+            sudo docker run -it -d -p 8080:8080 --name github-actions-demo hyeonjjun/github-actions-demo
 
-      # 4. 미사용 이미지를 정리합니다
-      - name: delete old docker image
-        run: sudo docker system prune -f
+      # REMOVE Github IP FROM security group (9)
+      - name: Remove IP FROM security group
+        run: |
+          aws ec2 revoke-security-group-ingress --group-id ${{ secrets.AWS_SG_ID }} --protocol tcp --port 22 --cidr ${{ steps.ip.outputs.ipv4 }}/32
