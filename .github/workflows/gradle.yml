@@ -75,6 +75,7 @@ jobs:
             sudo docker rm github-actions-demo
             sudo docker run -it -d -p 8080:8080 --name github-actions-demo hyeonjjun/github-actions-demo
 
+
       # REMOVE Github IP FROM security group (9)
       - name: Remove IP FROM security group
         run: |
